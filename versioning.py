@@ -296,14 +296,14 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
             raise RuntimeError("Schema names must end with "
                 "suffix _branch_rev_head")
 
-    pcur = Db(psycopg2.connect(pg_conn_info))
-
     temp_view_names = []
     first_table = True
     for pg_table_name,feature_list in list(izip_longest(pg_table_names, selected_feature_lists)):
         [schema, table] = pg_table_name.split('.')
         [schema, sep, branch] = schema[:-9].rpartition('_')
         del sep
+
+        pcur = Db(psycopg2.connect(pg_conn_info))
 
         # fetch the current rev
         pcur.execute("SELECT MAX(rev) FROM "+schema+".revisions")
@@ -315,6 +315,8 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
         [max_pg_pk] = pcur.fetchone()
         if not max_pg_pk :
             max_pg_pk = 0
+
+        pcur.close()
 
         temp_view_name = schema+"."+table+"_checkout_temp_view"
         temp_view_names.append(temp_view_name)
@@ -332,6 +334,8 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
             # GDAL > 2.1 allows specifying a filename for where args, e.g.
             #cmd += ['-where', '"'+pkey+' in ('+",".join([str(feature_list[i]) for i in range(0, len(feature_list))])+')"']
             # Get column names because we cannot just call 'SELECT *'
+
+            pcur = Db(psycopg2.connect(pg_conn_info))
             pcur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = \'"+schema+"\' AND table_name   = \'"+table+"\'")
             column_list = pcur.fetchall()
             new_columns_str = preserve_fid( pkey, column_list)
@@ -340,6 +344,7 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
                 view_str = "CREATE OR REPLACE VIEW "+temp_view_name+" AS SELECT "+new_columns_str+" FROM " +schema+"."+table+" WHERE "+pkey+' in ('+",".join([str(feature_list[i]) for i in range(0, len(feature_list))])+')'
             pcur.execute(view_str)
             pcur.commit()
+            pcur.close()
 
             if DEBUG: print ' '.join(cmd)
             os.system(' '.join(cmd))
@@ -363,6 +368,7 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
                         'PG:"'+pg_conn_info+'"', temp_view_name,
                         '-nln', table]
             # Same comments as in 'if feature_list' above
+            pcur = Db(psycopg2.connect(pg_conn_info))
             pcur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = \'"+schema+"\' AND table_name   = \'"+table+"\'")
             column_list = pcur.fetchall()
             new_columns_str = preserve_fid( pkey, column_list)
@@ -371,6 +377,7 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
                 view_str = "CREATE OR REPLACE VIEW "+temp_view_name+" AS SELECT "+new_columns_str+" FROM " +schema+"."+table+" WHERE "+pkey+' in ('+",".join([str(feature_list[i]) for i in range(0, len(feature_list))])+')'
             pcur.execute(view_str)
             pcur.commit()
+            pcur.close()
 
             if DEBUG: print ' '.join(cmd)
             os.system(' '.join(cmd))
@@ -384,6 +391,7 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
             scur.commit()
             scur.close()
 
+        pcur = Db(psycopg2.connect(pg_conn_info))
         scur = Db(dbapi2.connect(sqlite_filename))
 
         # create views and triggers in spatilite db
@@ -398,6 +406,7 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
                 newcols += "new."+quote_ident(res[1])+", "
         cols = cols[:-2]
         newcols = newcols[:-2] # remove last coma
+        pcur.close()
 
         scur.execute( "CREATE VIEW "+table+"_view "+"AS "
             "SELECT ROWID AS ROWID, ogc_fid, "+cols+" "
@@ -484,6 +493,8 @@ def checkout(pg_conn_info, pg_table_names, sqlite_filename, selected_feature_lis
 
         scur.commit()
         scur.close()
+
+    pcur = Db(psycopg2.connect(pg_conn_info))
     # Remove temp views after sqlite file is written
     for i in temp_view_names:
         del_view_str = "DROP VIEW IF EXISTS " + i
